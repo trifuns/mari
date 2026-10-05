@@ -6,7 +6,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build]
 include = [
-    "*.py"
+    "*.py",
+    "marilib/sim/firmware_snapshot.json",
 ]
 exclude = [
 ]
