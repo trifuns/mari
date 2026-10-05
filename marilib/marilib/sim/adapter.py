@@ -12,6 +12,7 @@ import threading
 import time
 
 from marilib.communication_adapter import CommunicationAdapterBase, SerialAdapterStats
+from marilib.serial_uart import SERIAL_DEFAULT_BAUDRATE
 from marilib.sim.network import Network
 
 
@@ -20,6 +21,7 @@ class SimulatedGatewayAdapter(CommunicationAdapterBase):
         self.network = network
         self.realtime = realtime
         self.port = f"simulator:{network.schedule.name}"
+        self.baudrate = SERIAL_DEFAULT_BAUDRATE
         self.stats = SerialAdapterStats()
         self.on_data_received = None
         self._stop = threading.Event()
