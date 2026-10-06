@@ -103,6 +103,8 @@ class Network:
         self._edge_inbox: deque[bytes] = deque()
         self._edge_lock = threading.Lock()
         self.realtime_lag_slots = 0
+        self.realtime_max_lag_s = 0.0
+        self._reset_pending = False
 
     # ------------------------------------------------------------ building --
 
@@ -156,6 +158,31 @@ class Network:
         self._forget(node)
         self._set_state(node, NodeState.OFF)
 
+    # ------------------------------------------------------------- gateway --
+
+    @property
+    def gateway_asn(self) -> int:
+        """The ASN the gateway reports and its nodes count, which a reset restarts from 0."""
+        return self.asn - self.gateway.asn_base
+
+    def halt_gateway(self) -> None:
+        """Stop both gateway cores, as storm runs do over SWD: no beacons, no reception, no UART."""
+        self.gateway.halted = True
+        self._emit("gw_halted")
+
+    def reset_gateway(self) -> None:
+        """Reboot the gateway with empty tables. It comes back at the next slotframe boundary."""
+        self.gateway.halted = True
+        self._reset_pending = True
+
+    def _reboot_gateway(self) -> None:
+        self._reset_pending = False
+        self.gateway.reboot(self.asn)
+        self._timers = [t for t in self._timers if t[2] != "gw_timeout"]
+        heapq.heapify(self._timers)
+        self._gateway_timer_armed.clear()
+        self._emit("gw_reset")
+
     # ---------------------------------------------------------------- edge --
 
     def edge_tx(self, data: bytes) -> None:
@@ -171,6 +198,9 @@ class Network:
         with self._edge_lock:
             inbox, self._edge_inbox = self._edge_inbox, deque()
         for data in inbox:
+            if self.gateway.halted:
+                self._emit("uart_drop", len=len(data), why="halted")
+                continue
             self.gateway.uart_rx_frames += 1
             self.gateway.uart_rx_bytes += len(data)
             # 03app_gateway_net: only NODE_DATA longer than a header is accepted
@@ -180,7 +210,7 @@ class Network:
             frame = Frame().from_bytes(data[1:])
             frame.header.source = self.gateway.address
             frame.header.network_id = self.network_id
-            self.gateway.stamp_tx_probe(frame, self.asn)
+            self.gateway.stamp_tx_probe(frame, self.gateway_asn)
             air = AirFrame(
                 PacketType.DATA,
                 self.gateway.address,
@@ -196,9 +226,11 @@ class Network:
     def step(self) -> None:
         asn = self.asn
         index = asn % self.schedule.n_cells
+        if index == 0 and self._reset_pending:
+            self._reboot_gateway()
         self._drain_edge()
-        if index == 0:
-            self._uart(self.gateway.uart_gateway_info(asn, self.slot_us))
+        if index == 0 and not self.gateway.halted:
+            self._uart(self.gateway.uart_gateway_info(self.gateway_asn, self.slot_us))
         self._fire_timers(asn)
         cell = self.schedule.cells[index]
         if cell.type == BEACON:
@@ -238,6 +270,7 @@ class Network:
                     time.sleep(ahead)
                 elif ahead < -slot_s:
                     self.realtime_lag_slots += 1
+                    self.realtime_max_lag_s = max(self.realtime_max_lag_s, -ahead)
             self.step()
         return self.asn - start_asn
 
@@ -263,7 +296,8 @@ class Network:
         while timers and timers[0][0] <= asn:
             _, _, kind, address, token = heapq.heappop(timers)
             if kind == "gw_timeout":
-                self._gateway_timeout(asn, cell_index=token)
+                if not self.gateway.halted:
+                    self._gateway_timeout(asn, cell_index=token)
                 continue
             node = self.nodes.get(address)
             if node is None:
@@ -395,6 +429,8 @@ class Network:
 
     def _beacon_cell(self, asn: int, index: int, channel_offset: int) -> None:
         gw = self.gateway
+        if gw.halted:
+            return
         self.gateway.set_usage(index, True)
         capacity = gw.remaining_capacity
         channel = self._beacon_channel(channel_offset)
@@ -427,6 +463,10 @@ class Network:
             node.joining_asn = asn
             self._set_state(node, NodeState.JOINING)
             self._arm(asn + self.join_response_slots, "join_timeout", node, node.epoch)
+        if self.gateway.halted:
+            for node in senders:
+                self._emit("tx", node=node.address, cell=index, kind="S", ok=False, why="halted")
+            return
         self.gateway.set_usage(index, bool(senders))
         if len(senders) > 1:
             for node in senders:
@@ -474,6 +514,8 @@ class Network:
 
     def _downlink_cell(self, asn: int, index: int) -> None:
         gw = self.gateway
+        if gw.halted:
+            return
         if gw.join_response is not None:
             address, cell = gw.join_response
             gw.join_response = None
@@ -507,7 +549,8 @@ class Network:
                 continue
             node.downlink.received += 1
             node.last_rx_asn = asn
-            rx = RxInfo(asn, self.channel.rssi_dbm(node.address, node.distance_m()), node.handover)
+            rssi = self.channel.rssi_dbm(node.address, node.distance_m())
+            rx = RxInfo(asn, rssi, node.handover, self.gateway_asn)
             node.app.on_downlink(self._to_frame(frame), rx)
 
     def _uplink_cell(self, asn: int, index: int) -> None:
@@ -524,6 +567,11 @@ class Network:
                 frame = AirFrame(PacketType.KEEP_ALIVE, node.address, gw.address)
             if frame is not None:
                 frames.append((node, frame))
+        if gw.halted:
+            for node, frame in frames:
+                node.uplink.sent += frame.type == PacketType.DATA
+                self._emit("tx", node=node.address, cell=index, kind="U", ok=False, why="halted")
+            return
         gw.set_usage(index, bool(frames))
         if len(frames) > 1:
             for node, _ in frames:
@@ -541,7 +589,7 @@ class Network:
             if is_data:
                 node.uplink.received += 1
                 mari_frame = self._to_frame(frame)
-                gw.stamp_rx_probe(mari_frame, asn, self.channel.rssi_dbm(node.address, node.distance_m()))
+                gw.stamp_rx_probe(mari_frame, self.gateway_asn, self.channel.rssi_dbm(node.address, node.distance_m()))
                 self._uart(gw.uart_data(mari_frame))
             else:
                 self._uart(gw.uart_node_event(EdgeEvent.NODE_KEEP_ALIVE, node.address))

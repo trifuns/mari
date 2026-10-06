@@ -25,21 +25,26 @@ class Recorder(Trace):
 
     def __init__(self, stream: IO[str] | None = None):
         super().__init__(stream)
-        # Uplink cell transmissions, data and keep-alive, collisions excluded
+        self.clear()
+
+    def clear(self) -> None:
+        # Uplink cell transmissions, data and keep-alive, collisions and halted-gateway slots excluded
         self.attempts: Counter[int] = Counter()
         self.delivered: Counter[int] = Counter()
         self.joined_at: dict[int, list[int]] = defaultdict(list)
         self.left_at: dict[int, list[int]] = defaultdict(list)
         self.rtt_slots: dict[int, list[int]] = defaultdict(list)
+        self.last_join_asn: int | None = None
 
     def emit(self, asn: int, ev: str, **fields) -> None:
         super().emit(asn, ev, **fields)
-        if ev == "tx" and fields["kind"] == "U" and fields.get("why") != "collision":
+        if ev == "tx" and fields["kind"] == "U" and fields.get("why") not in ("collision", "halted"):
             node = int(fields["node"], 16)
             self.attempts[node] += 1
             self.delivered[node] += fields["ok"]
         elif ev == "gw_joined":
             self.joined_at[int(fields["node"], 16)].append(asn)
+            self.last_join_asn = asn
         elif ev == "gw_left":
             self.left_at[int(fields["node"], 16)].append(asn)
 
@@ -54,6 +59,28 @@ class Recorder(Trace):
                 self.rtt_slots[frame.header.source].append(
                     probe.gw_rx_asn - probe.gw_tx_enqueued_asn
                 )
+
+
+@dataclass(frozen=True)
+class Storms:
+    """Join storms as storm_run.py makes them on the bench: halt the gateway, reset it, let the network re-form.
+
+    A storm has finished once no join has arrived for `quiet_s`, or `settle_s`
+    after the reset, whichever comes first.
+    """
+
+    cycles: int
+    hold_s: float = 6.0
+    quiet_s: float = 3.0
+    settle_s: float = 90.0
+
+
+@dataclass(frozen=True)
+class Storm:
+    reset_asn: int
+    nodes: int  # distinct nodes that joined
+    joins: int
+    span_slots: int  # first join to last join
 
 
 @dataclass(frozen=True)
@@ -75,6 +102,7 @@ class Session:
         probe_interval_s: float = 0.0,
         default_distance_m: float = 2.0,
         trace_stream: IO[str] | None = None,
+        storms: Storms | None = None,
     ):
         self.net = net
         self.recorder = Recorder(trace_stream)
@@ -86,6 +114,11 @@ class Session:
         self.probe_gap_slots = net.slots_for(probe_interval_s) if probe_interval_s else 0
         self._next_probe_asn = net.asn
         self._probe_turn = 0
+        self.storms = storms
+        self.storm_results: list[Storm] = []
+        self._storm_hold_until: int | None = None
+        self._storm_since = net.asn
+        self._storm_first = True
         self.tap_uart()
 
     def tap_uart(self) -> None:
@@ -109,16 +142,82 @@ class Session:
         slots = self.net.slots_for(duration_s) if duration_s is not None else None
         return self.net.run(slots, until=self._tick, realtime=realtime, stop=stop)
 
+    def form(self, quiet_s: float, settle_s: float) -> None:
+        """Run as fast as possible until joins stop, then start the run's clock and counters from there.
+
+        Bench runs begin with the network already formed, so a run that is
+        compared with one should too.
+        """
+        net, rec, start = self.net, self.recorder, self.net.asn
+
+        def formed(net: Network) -> bool:
+            last = rec.last_join_asn
+            if last is not None and net.asn - last >= net.slots_for(quiet_s):
+                return True
+            return net.asn - start >= net.slots_for(settle_s)
+
+        net.run(until=formed)
+        rec.clear()
+        self.start_asn = self._storm_since = self._next_probe_asn = net.asn
+
     def _tick(self, net: Network) -> bool:
         while self.pending and net.slots_for(self.pending[0].at_s) + self.start_asn <= net.asn:
             self._apply(self.pending.pop(0))
         if self.probe_gap_slots:
             self._probe()
+        return self.storms is not None and self._storm_tick()
+
+    def _storm_tick(self) -> bool:
+        """Advance the halt / reset / re-form cycle. True once the last storm has settled."""
+        net, rec, plan = self.net, self.recorder, self.storms
+        if self._storm_hold_until is not None:
+            if net.asn >= self._storm_hold_until:
+                self._storm_hold_until = None
+                net.reset_gateway()
+                self._storm_since = net.asn
+            return False
+        last = rec.last_join_asn
+        joined_since = last is not None and last >= self._storm_since
+        quiet = net.slots_for(plan.quiet_s)
+        if self._storm_first:
+            done = net.asn - max(self._storm_since, last or 0) >= quiet
+        else:
+            done = (joined_since and net.asn - last >= quiet) or (
+                net.asn - self._storm_since >= net.slots_for(plan.settle_s)
+            )
+        if not done:
+            return False
+        if not self._storm_first:
+            self.storm_results.append(self._storm_result())
+        self._storm_first = False
+        if len(self.storm_results) >= plan.cycles:
+            return True
+        net.halt_gateway()
+        self._storm_hold_until = net.asn + net.slots_for(plan.hold_s)
         return False
 
+    def _storm_result(self) -> Storm:
+        since = self._storm_since
+        joins = [(asn, node) for node, asns in self.recorder.joined_at.items() for asn in asns if asn >= since]
+        times = sorted(asn for asn, _ in joins)
+        return Storm(
+            reset_asn=since,
+            nodes=len({node for _, node in joins}),
+            joins=len(joins),
+            span_slots=times[-1] - times[0] if times else 0,
+        )
+
     def _apply(self, event: Event) -> None:
-        net, address = self.net, event.address
-        rec = self.recorder
+        net, rec = self.net, self.recorder
+        if event.action == "halt":
+            self.fired.append(FiredEvent(event, net.asn, 0, 0))
+            net.halt_gateway()
+            return
+        if event.action == "reset":
+            self.fired.append(FiredEvent(event, net.asn, 0, 0))
+            net.reset_gateway()
+            return
+        address = event.address
         self.fired.append(FiredEvent(event, net.asn, rec.attempts[address], rec.delivered[address]))
         if event.action == "remove":
             net.remove_node(address)
@@ -188,6 +287,13 @@ class Session:
         lines = [header, "", *lines]
         if self.fired:
             lines += ["", "events"] + [f"  {self._describe(f)}" for f in self.fired]
+        if self.storm_results:
+            lines += ["", f"{'storm':>6} {'reset_s':>8} {'nodes':>5} {'joins':>5} {'span_s':>7}"]
+            for i, storm in enumerate(self.storm_results, 1):
+                lines.append(
+                    f"{i:>6} {self.seconds(storm.reset_asn):>8.1f} {storm.nodes:>5} {storm.joins:>5} "
+                    f"{net.seconds(storm.span_slots):>7.2f}"
+                )
         return "\n".join(lines)
 
     def _rtt_p50(self, slots: list[int]) -> str:
@@ -196,8 +302,11 @@ class Session:
         return f"{self.net.seconds(sorted(slots)[(len(slots) - 1) // 2]) * 1000:.0f}"
 
     def _describe(self, fired: FiredEvent) -> str:
-        event, rec, address = fired.event, self.recorder, fired.event.address
+        event, rec = fired.event, self.recorder
         text = f"{self.seconds(fired.asn):6.1f} s  {event.describe()}"
+        if event.node is None:
+            return text
+        address = event.address
         if event.action == "remove":
             left = [a for a in rec.left_at.get(address, []) if a >= fired.asn]
             seen = f"gateway saw it leave at {self.seconds(left[0]):.1f} s" if left else "gateway never saw it leave"

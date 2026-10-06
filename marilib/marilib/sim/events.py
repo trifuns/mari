@@ -10,6 +10,10 @@
     action = "move"
     node = 5
     distance = 12.0    # meters from the gateway, or position = [x, y]
+
+    [[event]]
+    at = 30.0
+    action = "halt"    # the gateway: "halt" stops it, "reset" reboots it with empty tables
 """
 
 from __future__ import annotations
@@ -20,14 +24,16 @@ from pathlib import Path
 
 from marilib.sim.network import DEFAULT_NODE_ADDRESS_BASE
 
-ACTIONS = ("add", "remove", "move")
+NODE_ACTIONS = ("add", "remove", "move")
+GATEWAY_ACTIONS = ("halt", "reset")
+ACTIONS = NODE_ACTIONS + GATEWAY_ACTIONS
 
 
 @dataclass(frozen=True)
 class Event:
     at_s: float
     action: str
-    node: int
+    node: int | None = None  # None for a gateway action
     position: tuple[float, float] | None = None
 
     @property
@@ -35,6 +41,8 @@ class Event:
         return DEFAULT_NODE_ADDRESS_BASE + self.node
 
     def describe(self) -> str:
+        if self.node is None:
+            return f"{self.action} gateway"
         text = f"{self.action} node {self.node}"
         if self.position is not None:
             text += f" to {math.hypot(*self.position):.1f} m"
@@ -50,13 +58,23 @@ def parse_events(data: dict) -> list[Event]:
         if unknown:
             raise ValueError(f"{where}: unknown key(s) {', '.join(sorted(unknown))}")
         try:
-            at_s, action, node = float(entry["at"]), entry["action"], int(entry["node"])
+            at_s, action = float(entry["at"]), entry["action"]
         except KeyError as missing:
             raise ValueError(f"{where}: missing {missing}") from None
         if action not in ACTIONS:
             raise ValueError(f"{where}: action must be one of {', '.join(ACTIONS)}, got {action!r}")
-        if at_s < 0 or node < 1:
-            raise ValueError(f"{where}: 'at' must be >= 0 and 'node' >= 1")
+        if at_s < 0:
+            raise ValueError(f"{where}: 'at' must be >= 0")
+        if action in GATEWAY_ACTIONS:
+            if set(entry) - {"at", "action"}:
+                raise ValueError(f"{where}: '{action}' acts on the gateway and takes only 'at'")
+            events.append(Event(at_s, action))
+            continue
+        if "node" not in entry:
+            raise ValueError(f"{where}: missing 'node'")
+        node = int(entry["node"])
+        if node < 1:
+            raise ValueError(f"{where}: 'node' must be >= 1")
         if "distance" in entry and "position" in entry:
             raise ValueError(f"{where}: give 'distance' or 'position', not both")
         position = None
@@ -81,10 +99,17 @@ def load_events(path: str | Path) -> list[Event]:
 
 
 def check_events(events: list[Event], n_nodes: int) -> None:
-    """Raise ValueError if an event acts on a node that is not powered at that point."""
+    """Raise ValueError if an event acts on a node that is not powered, or halts a halted gateway."""
     present = set(range(1, n_nodes + 1))
+    halted = False
     for event in events:
-        if event.action == "add":
+        if event.action == "halt":
+            if halted:
+                raise ValueError(f"at {event.at_s} s: the gateway is already halted")
+            halted = True
+        elif event.action == "reset":
+            halted = False
+        elif event.action == "add":
             if event.node in present:
                 raise ValueError(f"at {event.at_s} s: node {event.node} is already on")
             present.add(event.node)

@@ -34,6 +34,7 @@ class RxInfo:
     asn: int
     rssi_dbm: int
     handover: HandoverInfo
+    gateway_asn: int  # the ASN as the node's MAC counts it: synced to the gateway, which restarts at 0 on reset
 
 
 class NodeApp(Protocol):
@@ -65,9 +66,9 @@ class ProbeResponder:
         self.rx_count += 1
         self.tx_count += 1
         probe.node_rx_count = self.rx_count
-        probe.node_rx_asn = rx.asn
+        probe.node_rx_asn = rx.gateway_asn
         probe.node_tx_count = self.tx_count
-        probe.node_tx_enqueued_asn = rx.asn
+        probe.node_tx_enqueued_asn = rx.gateway_asn
         probe.rssi_at_node = rx.rssi_dbm & 0xFF
         probe.node_handover_duration_ms = rx.handover.duration_ms
         probe.node_handover_seq = rx.handover.seq

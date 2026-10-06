@@ -48,9 +48,22 @@ class SimGateway:
     probes: ProbeCounters = field(default_factory=ProbeCounters)
     uart_rx_frames: int = 0
     uart_rx_bytes: int = 0
+    halted: bool = False
+    asn_base: int = 0  # network ASN at the last reset, where the gateway's own ASN restarts from 0
 
     def __post_init__(self):
         self.cells = {i: [0, 0] for i in self.schedule.indices(UPLINK)}
+
+    def reboot(self, asn: int) -> None:
+        """A reset: every table, counter and queue starts empty, and the gateway's ASN starts at 0."""
+        self.__post_init__()
+        self.join_response = None
+        self.sched_usage = 0
+        self.probes = ProbeCounters()
+        self.queue.reset()
+        self.uart_rx_frames = self.uart_rx_bytes = 0
+        self.halted = False
+        self.asn_base = asn
 
     @property
     def joined(self) -> list[int]:

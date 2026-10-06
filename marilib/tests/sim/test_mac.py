@@ -161,3 +161,24 @@ def test_a_rejoin_takes_the_first_free_cell_even_while_still_held():
     gw.cells[first][0] = 0  # 0xA timed out
     assert gw.assign_cell(0xB, 10) == (first, True)
     assert [c for c, (node, _) in gw.cells.items() if node == 0xB] == [first, second]
+
+
+def test_a_halted_gateway_goes_silent_and_a_reset_restarts_it_empty_at_asn_0():
+    net = perfect_network(3)
+    uart = Uart(net)
+    net.run(net.slots_for(2))
+    assert net.joined_count == 3
+    net.halt_gateway()
+    halted_at = net.asn
+    net.run(net.slots_for(3))
+    assert not [asn for asn, _ in uart.of(EdgeEvent.GATEWAY_INFO) if asn >= halted_at]
+    assert not any(node.state == NodeState.JOINED for node in net.nodes.values())
+    assert not uart.of(EdgeEvent.NODE_LEFT)  # a halted gateway reports nothing
+
+    net.reset_gateway()
+    reset_at = net.asn
+    net.run(net.slots_for(2))
+    infos = [info for asn, info in uart.of(EdgeEvent.GATEWAY_INFO) if asn >= reset_at]
+    assert infos[0].asn == 0
+    assert len({address for asn, address in uart.of(EdgeEvent.NODE_JOINED) if asn >= reset_at}) == 3
+    assert net.joined_count == 3
