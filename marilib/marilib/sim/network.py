@@ -579,8 +579,9 @@ class Network:
         gw = self.gateway
         frames = []
         for node in senders:
-            while (payload := node.app.next_uplink(asn)) is not None:
-                air = AirFrame(PacketType.DATA, node.address, gw.address, payload, node.app.next_proto)
+            while (uplink := node.app.next_uplink(asn)) is not None:
+                payload, next_proto = uplink if isinstance(uplink, tuple) else (uplink, node.app.next_proto)
+                air = AirFrame(PacketType.DATA, node.address, gw.address, payload, next_proto)
                 if not node.queue.add(air):
                     self._emit("queue_wrap", node=node.address)
             frame = node.queue.pop()

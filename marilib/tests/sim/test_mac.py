@@ -1,6 +1,6 @@
 import random
 
-from marilib.mari_protocol import MARI_BROADCAST_ADDRESS, Frame, Header, MetricsProbePayload
+from marilib.mari_protocol import MARI_BROADCAST_ADDRESS, Frame, Header, MetricsProbePayload, NextProto
 from marilib.model import EdgeEvent
 from marilib.sim.app import SyntheticApp
 from marilib.sim.links import PerfectLinks
@@ -135,6 +135,23 @@ def test_status_and_probe_replies_leave_in_queue_order():
     while (payload := app.next_uplink(9)) is not None:
         out.append(payload)
     assert out == [b"probe-3", app.payload, b"probe-8"]
+
+
+def test_an_uplink_paired_with_a_next_proto_is_sent_under_it():
+    class TwoProtoApp(SyntheticApp):
+        def next_uplink(self, asn):
+            if self._pending:
+                return self._pending.popleft()
+
+    net = Network("tiny", links=PerfectLinks())
+    app = TwoProtoApp(next_proto=NextProto.DOTBOT_APP)
+    net.add_node(app, start_asn=0)
+    uart = Uart(net)
+    joined(net)
+    app._pending.extend([b"app", (b"internal", NextProto.MARI_INTERNAL)])
+    net.run(net.schedule.n_cells * 3)
+    sent = [(f.payload, f.header.next_proto) for _, f in uart.of(EdgeEvent.NODE_DATA)]
+    assert sent == [(b"app", NextProto.DOTBOT_APP), (b"internal", NextProto.MARI_INTERNAL)]
 
 
 def test_uplinks_made_before_joining_are_dropped():

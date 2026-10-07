@@ -46,8 +46,12 @@ class NodeApp(Protocol):
     def on_downlink(self, frame: Frame, rx: RxInfo) -> None:
         """A data frame from the gateway, addressed to this node or broadcast."""
 
-    def next_uplink(self, asn: int) -> bytes | None:
-        """The next payload to enqueue, or None when there is nothing more for now."""
+    def next_uplink(self, asn: int) -> bytes | tuple[bytes, int] | None:
+        """The next payload to enqueue, or None when there is nothing more for now.
+
+        A (payload, next_proto) pair sends that payload under its own next_proto
+        rather than the app's.
+        """
 
 
 def is_probe(payload: bytes) -> bool:
