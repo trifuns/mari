@@ -21,7 +21,7 @@ from marilib.mari_protocol import MARI_BROADCAST_ADDRESS, MARI_NET_ID_DEFAULT, F
 from marilib.model import EdgeEvent
 from marilib.protocol import PacketType
 from marilib.sim.app import STATUS_PERIOD_S, HandoverInfo, NodeApp, RxInfo, SyntheticApp
-from marilib.sim.channel import ChannelModel, DistanceChannel
+from marilib.sim.links import DOWN, UP, Link, LinkModel, PerfectLinks
 from marilib.sim.firmware import (
     BEACON,
     DOWNLINK,
@@ -56,7 +56,8 @@ class Network:
         schedule: Schedule | str | int,
         *,
         seed: int = 0,
-        channel: ChannelModel | None = None,
+        links: LinkModel | None = None,
+        gateway_position: tuple[float, float, float] = (0.0, 0.0, 0.0),
         firmware: Firmware | None = None,
         trace: Trace | None = None,
         network_id: int = MARI_NET_ID_DEFAULT,
@@ -66,7 +67,8 @@ class Network:
         self.schedule = schedule if isinstance(schedule, Schedule) else self.fw.schedule(schedule)
         self.seed = seed
         self.rng = random.Random(f"{seed}:network")
-        self.channel = channel if channel is not None else DistanceChannel()
+        self.links = links if links is not None else PerfectLinks()
+        self.gateway_position = gateway_position
         self.trace = trace
         self.network_id = network_id
         self.asn = 0
@@ -116,16 +118,24 @@ class Network:
         schedule: Schedule | str | int | None = None,
         distance_m: float = 2.0,
         status_period_s: float | None = STATUS_PERIOD_S,
+        addresses: list[int] | None = None,
         **kwargs,
     ) -> "Network":
-        """N stock nodes on a circle around the gateway, on the smallest schedule that fits."""
+        """N stock nodes on a circle around the gateway, on the smallest schedule that fits.
+
+        The first nodes take `addresses`, in order; the rest are numbered from
+        DEFAULT_NODE_ADDRESS_BASE.
+        """
+        addresses = list(addresses or [])
+        if len(addresses) > n_nodes:
+            raise ValueError(f"{len(addresses)} addresses for {n_nodes} nodes")
         firmware = kwargs.pop("firmware", None) or load_firmware()
         net = cls(schedule or firmware.schedule_for(n_nodes), firmware=firmware, **kwargs)
         period = round(status_period_s * 1e6 / net.slot_us) if status_period_s else 0
         for i in range(n_nodes):
             angle = 2 * math.pi * i / max(n_nodes, 1)
             position = (round(distance_m * math.cos(angle), 9), round(distance_m * math.sin(angle), 9))
-            address = DEFAULT_NODE_ADDRESS_BASE + i + 1
+            address = addresses[i] if i < len(addresses) else DEFAULT_NODE_ADDRESS_BASE + i + 1
             app = SyntheticApp(
                 position=position, period_slots=period, rng=random.Random(f"{net.seed}:app:{address}")
             )
@@ -145,7 +155,6 @@ class Network:
         rng = random.Random(f"{self.seed}:node:{address}")
         node = SimNode(address, app, rng, MariQueue(self.fw["MARI_PACKET_QUEUE_SIZE"]))
         self.nodes[address] = node
-        self.channel.add_node(address, rng)
         if start_asn is None:
             start_asn = self.asn - rng.randrange(self.scan_slots)
             node.scan_round = rng.randrange(self.n_adv)
@@ -424,8 +433,18 @@ class Network:
     def _beacon_channel(self, channel_offset: int) -> int:
         return self.n_regular + (channel_offset % self.n_adv if self.beacon_hopping else 0)
 
-    def _received(self, node: SimNode) -> bool:
-        return node.rng.random() < self.channel.pdr(node.address, node.distance_m())
+    def _link(self, node: SimNode, direction: str, channel: int) -> Link:
+        x, y = node.app.position_m()
+        return Link(
+            node.address, self.gateway.address, direction, self.asn, channel, (x, y, 0.0), self.gateway_position
+        )
+
+    def _data_channel(self, index: int) -> int:
+        # scheduler.c mr_scheduler_get_channel, RFC 7554: (ASN + offset) mod nFreq
+        return (self.gateway_asn + self.schedule.cells[index].channel_offset) % self.n_regular
+
+    def _received(self, link: Link, node: SimNode) -> bool:
+        return node.rng.random() < self.links.pdr(link)
 
     def _beacon_cell(self, asn: int, index: int, channel_offset: int) -> None:
         gw = self.gateway
@@ -436,10 +455,10 @@ class Network:
         channel = self._beacon_channel(channel_offset)
         members = set(gw.joined)
         for node in self._scanning.values():
-            if node.scan_channel == channel and capacity > 0 and self._received(node):
+            if node.scan_channel == channel and capacity > 0 and self._received(self._link(node, DOWN, channel), node):
                 node.scan_beacon_capacity = capacity
         for node in self._listening.values():
-            if node.active_from > asn or not self._received(node):
+            if node.active_from > asn or not self._received(self._link(node, DOWN, channel), node):
                 continue
             node.remaining_capacity = capacity
             if node.state == NodeState.JOINED:
@@ -473,7 +492,7 @@ class Network:
                 self._emit("tx", node=node.address, cell=index, kind="S", ok=False, why="collision")
             return
         for node in senders:
-            ok = self._received(node)
+            ok = self._received(self._link(node, UP, self._data_channel(index)), node)
             self._emit("tx", node=node.address, cell=index, kind="S", ok=ok, **_lost(ok))
             if ok:
                 self._gateway_join_request(node.address, asn)
@@ -529,7 +548,8 @@ class Network:
             node = self._listening.get(frame.dst)
             if node is None or node.active_from > asn:
                 return
-            ok = self._received(node)
+            link = self._link(node, DOWN, self._data_channel(index))
+            ok = self._received(link, node)
             self._emit("tx", node=node.address, cell=index, kind="D", ok=ok, join=True, **_lost(ok))
             if ok and node.state == NodeState.JOINING:
                 self._joined(node, frame.cell, asn)
@@ -543,13 +563,14 @@ class Network:
             if node.active_from > asn:
                 continue
             node.downlink.sent += 1
-            ok = self._received(node)
+            link = self._link(node, DOWN, self._data_channel(index))
+            ok = self._received(link, node)
             self._emit("tx", node=node.address, cell=index, kind="D", ok=ok, **_lost(ok))
             if not ok:
                 continue
             node.downlink.received += 1
             node.last_rx_asn = asn
-            rssi = self.channel.rssi_dbm(node.address, node.distance_m())
+            rssi = self.links.rssi_dbm(link)
             rx = RxInfo(asn, rssi, node.handover, self.gateway_asn)
             node.app.on_downlink(self._to_frame(frame), rx)
 
@@ -581,7 +602,8 @@ class Network:
             is_data = frame.type == PacketType.DATA
             if is_data:
                 node.uplink.sent += 1
-            ok = self._received(node)
+            link = self._link(node, UP, self._data_channel(index))
+            ok = self._received(link, node)
             self._emit("tx", node=node.address, cell=index, kind="U", ok=ok, **_lost(ok))
             if not ok or gw.cell_of(node.address) is None:
                 continue  # the gateway only listens to nodes it holds a cell for
@@ -589,7 +611,7 @@ class Network:
             if is_data:
                 node.uplink.received += 1
                 mari_frame = self._to_frame(frame)
-                gw.stamp_rx_probe(mari_frame, self.gateway_asn, self.channel.rssi_dbm(node.address, node.distance_m()))
+                gw.stamp_rx_probe(mari_frame, self.gateway_asn, self.links.rssi_dbm(link))
                 self._uart(gw.uart_data(mari_frame))
             else:
                 self._uart(gw.uart_node_event(EdgeEvent.NODE_KEEP_ALIVE, node.address))

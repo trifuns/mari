@@ -7,11 +7,11 @@ from marilib.protocol import PacketType
 from marilib.sim.adapter import SimulatedGatewayAdapter
 from marilib.sim.network import Network
 
-from .conftest import Uart
+from .conftest import LOSSY, Uart
 
 
 def test_every_uart_event_parses_with_marilib():
-    net = Network.for_nodes(12, seed=2, distance_m=10.0)
+    net = Network.for_nodes(12, seed=2, links=LOSSY)
     uart = Uart(net)  # raises on anything marilib cannot decode
     net.run(net.slots_for(6))
     kinds = {event for _, event, _ in uart.events}

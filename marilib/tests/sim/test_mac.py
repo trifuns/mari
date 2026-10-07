@@ -3,7 +3,7 @@ import random
 from marilib.mari_protocol import MARI_BROADCAST_ADDRESS, Frame, Header, MetricsProbePayload
 from marilib.model import EdgeEvent
 from marilib.sim.app import SyntheticApp
-from marilib.sim.channel import PerfectChannel
+from marilib.sim.links import PerfectLinks
 from marilib.sim.network import Network
 from marilib.sim.node import MariQueue, NodeState, SimNode
 from marilib.sim.trace import Trace
@@ -138,7 +138,7 @@ def test_status_and_probe_replies_leave_in_queue_order():
 
 
 def test_uplinks_made_before_joining_are_dropped():
-    net = Network("tiny", channel=PerfectChannel())
+    net = Network("tiny", links=PerfectLinks())
     app = SyntheticApp(period_slots=1)
     net.add_node(app, start_asn=0)
     uart = Uart(net)

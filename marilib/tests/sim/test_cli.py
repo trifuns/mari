@@ -9,6 +9,7 @@ from marilib.marilib_edge import MarilibEdge
 from marilib.sim import Network, SimulatedGatewayAdapter
 from marilib.sim.cli import main
 from marilib.sim.events import Event, check_events, parse_events
+from marilib.sim.links import PerfectLinks
 from marilib.sim.runner import Session, Storms
 from marilib.tui_edge import MarilibTUIEdge
 
@@ -60,16 +61,21 @@ def test_same_seed_and_events_give_the_same_summary(tmp_path):
     assert summary(first.output) == summary(second.output)
 
 
-def test_a_move_out_of_range_lowers_that_nodes_pdr():
-    drops = []
-    for seed in range(4):
-        net = Network.for_nodes(20, seed=seed)
-        session = Session(net, events=[Event(20.0, "move", 5, (12.0, 0.0))])
-        session.run(60)
-        before, rec = session.fired[0], session.recorder
-        after = (rec.delivered[0x1005] - before.delivered) / (rec.attempts[0x1005] - before.attempts)
-        drops.append(before.delivered / before.attempts - after)
-    assert sum(drops) / len(drops) > 0.02
+def test_a_move_reaches_the_link_model_as_the_nodes_position():
+    class Recording(PerfectLinks):
+        seen: dict[float, set] = {}
+
+        def pdr(self, link):
+            if link.node == 0x1005:
+                self.seen.setdefault(link.node_pos[0], set()).add(link.asn)
+            return 1.0
+
+    net = Network.for_nodes(20, seed=1, links=Recording())
+    session = Session(net, events=[Event(20.0, "move", 5, (12.0, 0.0))])
+    session.run(30)
+    moved_at = session.fired[0].asn
+    assert max(net.links.seen[12.0]) > moved_at
+    assert max(asn for x, asns in net.links.seen.items() if x != 12.0 for asn in asns) < moved_at
 
 
 def test_fast_runs_measure_rtt_from_gateway_stamps():

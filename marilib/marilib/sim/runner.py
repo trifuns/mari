@@ -259,14 +259,14 @@ class Session:
         powered = set(net.nodes)
         joined_now = set(net.gateway.joined)
         lines = [
-            f"{'node':>6} {'dist_m':>6} {'joins':>5} {'left':>4} {'first_join_s':>12} "
+            f"{'node':>16} {'dist_m':>6} {'joins':>5} {'left':>4} {'first_join_s':>12} "
             f"{'uplink_pdr%':>11} {'rtt_p50_ms':>10}"
         ]
         for address in addresses:
             node = net.nodes.get(address)
             joins = rec.joined_at.get(address, [])
             lines.append(
-                f"{address - DEFAULT_NODE_ADDRESS_BASE:>6} "
+                f"{_label(address):>16} "
                 f"{(f'{node.distance_m():.1f}' if node else 'off'):>6} "
                 f"{len(joins):>5} {len(rec.left_at.get(address, [])):>4} "
                 f"{(f'{self.seconds(joins[0]):.2f}' if joins else '-'):>12} "
@@ -275,7 +275,7 @@ class Session:
             )
         all_rtt = [s for slots in rec.rtt_slots.values() for s in slots]
         lines.append(
-            f"{'all':>6} {'':>6} {sum(map(len, rec.joined_at.values())):>5} "
+            f"{'all':>16} {'':>6} {sum(map(len, rec.joined_at.values())):>5} "
             f"{sum(map(len, rec.left_at.values())):>4} {'':>12} "
             f"{_pct(sum(rec.delivered.values()), sum(rec.attempts.values())):>11} "
             f"{self._rtt_p50(all_rtt):>10}"
@@ -335,3 +335,9 @@ class Session:
 
 def _pct(delivered: int, attempts: int) -> str:
     return f"{100 * delivered / attempts:.1f}" if attempts else "-"
+
+
+def _label(address: int) -> str:
+    """A numbered node (Network.for_nodes, events) by its number, any other by its address."""
+    number = address - DEFAULT_NODE_ADDRESS_BASE
+    return str(number) if 0 < number < 0x1000 else f"{address:X}"

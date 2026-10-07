@@ -10,6 +10,7 @@ import click
 
 from marilib.model import SCHEDULES
 from marilib.sim.events import check_events, load_events
+from marilib.sim.links import StaticLinks
 from marilib.sim.network import Network
 from marilib.sim.runner import Session, Storms
 from marilib.sim.verify import main as verify
@@ -21,7 +22,14 @@ def main():
 
 
 @main.command()
-@click.option("--nodes", "-n", "n_nodes", default=10, show_default=True, help="Nodes powered at start.")
+@click.option(
+    "--nodes",
+    "-n",
+    "n_nodes",
+    type=click.IntRange(min=0),
+    default=None,
+    help="Nodes powered at start. [default: the robots in --links, else 10]",
+)
 @click.option(
     "--schedule",
     "-s",
@@ -31,7 +39,17 @@ def main():
 )
 @click.option("--seed", default=0, show_default=True, help="Same seed and events, same run.")
 @click.option(
-    "--distance", default=2.0, show_default=True, help="Meters from the gateway, for every node."
+    "--pdr",
+    type=click.FloatRange(0, 100),
+    default=100.0,
+    show_default=True,
+    help="Uplink and downlink PDR in percent, for every link --links does not set.",
+)
+@click.option(
+    "--links",
+    "links_path",
+    type=click.Path(exists=True, dir_okay=False),
+    help="Per-robot PDRs, in the PyDotBot simulator's world-file format (see marilib.sim.links).",
 )
 @click.option(
     "--duration",
@@ -98,7 +116,7 @@ def main():
 )
 @click.option("--summary", is_flag=True, help="Print per-node PDR, RTT and event outcomes at the end.")
 def run(
-    n_nodes, schedule, seed, distance, duration, pacing, headless, metrics_probe_interval, probe_every,
+    n_nodes, schedule, seed, pdr, links_path, duration, pacing, headless, metrics_probe_interval, probe_every,
     load, log_dir, storms, hold, quiet, settle, events_path, trace_file, summary,
 ):  # fmt: skip
     """Run a network of --nodes stock nodes around one gateway."""
@@ -114,13 +132,30 @@ def run(
     if probe_every is not None and probe_every < 1:
         raise click.BadParameter("must be >= 1", param_hint="--probe-every")
     try:
+        links = StaticLinks.from_file(links_path) if links_path else StaticLinks(pdr / 100, pdr / 100)
+    except ValueError as error:
+        raise click.BadParameter(str(error), param_hint="--links") from None
+    if links_path and pdr != 100.0:
+        raise click.UsageError("give --pdr or --links, not both: the file's [network] sets the defaults")
+    addresses = links.addresses
+    if n_nodes is None:
+        n_nodes = len(addresses) or 10
+    if n_nodes < len(addresses):
+        raise click.BadParameter(f"--links lists {len(addresses)} robots", param_hint="--nodes")
+    if events_path and addresses:
+        raise click.UsageError("--events numbers nodes from 1, so it cannot be combined with robots in --links yet")
+    try:
         events = load_events(events_path) if events_path else []
         check_events(events, n_nodes)
     except ValueError as error:
         raise click.BadParameter(str(error), param_hint="--events") from None
     try:
         net = Network.for_nodes(
-            n_nodes, schedule=None if schedule == "auto" else schedule, seed=seed, distance_m=distance
+            n_nodes,
+            schedule=None if schedule == "auto" else schedule,
+            seed=seed,
+            links=links,
+            addresses=addresses,
         )
     except KeyError as error:
         raise click.BadParameter(error.args[0], param_hint="--schedule") from None
@@ -135,7 +170,6 @@ def run(
         net,
         events=events,
         probe_interval_s=probe_interval_s if fast else 0.0,
-        default_distance_m=distance,
         trace_stream=trace_file,
         storms=storm_plan,
     )
@@ -152,7 +186,9 @@ def run(
             "send_periodic_s": 0,
             "sim_nodes": n_nodes,
             "sim_seed": seed,
-            "sim_distance_m": distance,
+            "sim_uplink_pdr": round(100 * links.uplink, 2),
+            "sim_downlink_pdr": round(100 * links.downlink, 2),
+            "sim_links_file": links_path or "",
         }
         run_dir = _run_with_edge(
             session, duration, probe_interval_s, tui=not headless, log_dir=log_dir, load=load,

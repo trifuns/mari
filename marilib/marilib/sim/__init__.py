@@ -6,18 +6,20 @@
 
 from marilib.sim.adapter import SimulatedGatewayAdapter
 from marilib.sim.app import NodeApp, RxInfo, SyntheticApp
-from marilib.sim.channel import DistanceChannel, PerfectChannel
+from marilib.sim.links import Link, LinkModel, PerfectLinks, StaticLinks
 from marilib.sim.firmware import load_firmware
 from marilib.sim.network import Network
 from marilib.sim.trace import Trace
 
 __all__ = [
-    "DistanceChannel",
+    "Link",
+    "LinkModel",
     "Network",
     "NodeApp",
-    "PerfectChannel",
+    "PerfectLinks",
     "RxInfo",
     "SimulatedGatewayAdapter",
+    "StaticLinks",
     "SyntheticApp",
     "Trace",
     "load_firmware",

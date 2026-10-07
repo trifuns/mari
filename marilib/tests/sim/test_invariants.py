@@ -9,14 +9,14 @@ from marilib.sim.network import Network
 from marilib.sim.node import NodeState
 from marilib.sim.trace import Trace
 
-from .conftest import Uart
+from .conftest import LOSSY, Uart
 
 # The plan's full check is 1000 seeds; the default keeps `pytest` quick.
 INVARIANT_RUNS = int(os.environ.get("MARI_SIM_INVARIANT_RUNS", "8"))
 
 
 def run_checked(seed: int, n: int = 102, seconds: float = 8.0):
-    net = Network.for_nodes(n, seed=seed, distance_m=10.0)
+    net = Network.for_nodes(n, seed=seed, links=LOSSY)
     uart = Uart(net)
     schedule = net.schedule
     for _ in range(net.slots_for(seconds)):
@@ -47,7 +47,7 @@ def test_no_shared_cells_and_no_data_before_join(seed):
 def test_pdr_does_not_depend_on_the_node_count():
     rates = {}
     for n in (5, 100):
-        net = Network.for_nodes(n, seed=11, distance_m=10.0, status_period_s=0.05)
+        net = Network.for_nodes(n, seed=11, links=LOSSY, status_period_s=0.05)
         net.run(net.slots_for(40 if n == 5 else 8))
         sent = sum(x.uplink.sent for x in net.nodes.values())
         received = sum(x.uplink.received for x in net.nodes.values())

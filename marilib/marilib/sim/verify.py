@@ -4,7 +4,8 @@ Nothing here asserts: hardware is one campaign and the comparison is for a
 human to read. The metric definitions follow the campaign's analysis scripts
 so the columns are comparable: formation is the nearest-rank percentile of
 each node's first NODE_JOINED, offset from the first join of the run, averaged
-over runs; PDR is single-attempt uplink delivery.
+over runs; PDR is single-attempt uplink delivery, which every link is set to, so its column
+only checks that the engine delivers what the link model asks for.
 """
 
 from __future__ import annotations
@@ -19,12 +20,13 @@ import click
 from marilib.mari_protocol import Frame, Header, MetricsProbePayload
 from marilib.model import EdgeEvent, NodeInfoEdge
 from marilib.sim.app import is_probe
+from marilib.sim.links import StaticLinks
 from marilib.sim.network import Network
 
 # The mari single-gateway dongle campaign (mari-evaluation, 2026), at 2 m.
 REFERENCE_FORMATION_P95_S = {10: 0.50, 40: 1.24, 60: 1.68, 100: 3.14}
 REFERENCE_RTT_P50_MS = {"tiny": 40, "medium": 96, "big": 146, "huge": 233}
-REFERENCE_PDR = {2.0: 0.986, 10.0: 0.943}
+REFERENCE_PDR = 0.986
 
 # The campaign held the probe stream at 15% of downlink capacity, so RTT is
 # measured on a lightly loaded downlink at every schedule.
@@ -92,12 +94,12 @@ class Result:
     formation_p95_s: list[float] = field(default_factory=list)
     formation_p100_s: list[float] = field(default_factory=list)
     rtt_ms: list[float] = field(default_factory=list)
-    pdr: dict[float, list[float]] = field(default_factory=dict)
+    pdr: list[float] = field(default_factory=list)
     incomplete: int = 0
 
 
-def run_one(n: int, seed: int, distance_m: float, measure_s: float, result: Result) -> None:
-    net = Network.for_nodes(n, seed=seed, distance_m=distance_m)
+def run_one(n: int, seed: int, measure_s: float, result: Result) -> None:
+    net = Network.for_nodes(n, seed=seed, links=StaticLinks(REFERENCE_PDR, REFERENCE_PDR))
     edge = EdgeProbe(net)
     net.run(net.slots_for(FORMATION_CAP_S), until=lambda x: len(edge.first_join) == n)
     if len(edge.first_join) < n:
@@ -105,16 +107,14 @@ def run_one(n: int, seed: int, distance_m: float, measure_s: float, result: Resu
     if edge.first_join:
         t0 = min(edge.first_join.values())
         offsets = sorted(net.seconds(asn - t0) for asn in edge.first_join.values())
-        if distance_m == 2.0:
-            result.formation_p95_s.append(nearest_rank(offsets, 95))
-            result.formation_p100_s.append(nearest_rank(offsets, 100))
+        result.formation_p95_s.append(nearest_rank(offsets, 95))
+        result.formation_p100_s.append(nearest_rank(offsets, 100))
     edge.measure(measure_s)
-    if distance_m == 2.0:
-        result.rtt_ms.extend(net.seconds(s) * 1000 for s in edge.rtt_slots)
+    result.rtt_ms.extend(net.seconds(s) * 1000 for s in edge.rtt_slots)
     sent = sum(node.uplink.sent for node in net.nodes.values())
     received = sum(node.uplink.received for node in net.nodes.values())
     if sent:
-        result.pdr.setdefault(distance_m, []).append(received / sent)
+        result.pdr.append(received / sent)
 
 
 def _mean(values: list[float]) -> str:
@@ -123,7 +123,7 @@ def _mean(values: list[float]) -> str:
 
 @click.command()
 @click.option("--n", "sizes", default="10,40,60,100", show_default=True, help="Node counts.")
-@click.option("--reps", default=20, show_default=True, help="Seeds per node count at 2 m.")
+@click.option("--reps", default=20, show_default=True, help="Seeds per node count.")
 @click.option("--measure-s", default=10.0, show_default=True, help="Probing time after formation.")
 @click.option("--seed", default=0, show_default=True, help="First seed.")
 def main(sizes: str, reps: int, measure_s: float, seed: int):
@@ -133,9 +133,7 @@ def main(sizes: str, reps: int, measure_s: float, seed: int):
     for n in [int(s) for s in sizes.split(",")]:
         result = Result()
         for rep in range(reps):
-            run_one(n, seed + rep, 2.0, measure_s, result)
-        for rep in range(max(1, reps // 4)):
-            run_one(n, seed + rep, 10.0, measure_s, result)
+            run_one(n, seed + rep, measure_s, result)
         schedule = Network.for_nodes(0).fw.schedule_for(n).name
         rtt = sorted(result.rtt_ms)
         rows.append(
@@ -144,18 +142,17 @@ def main(sizes: str, reps: int, measure_s: float, seed: int):
                 f"{_mean(result.formation_p95_s):>6} {REFERENCE_FORMATION_P95_S.get(n, '-'):>6}",
                 f"{_mean(result.formation_p100_s):>6}",
                 f"{(nearest_rank(rtt, 50) if rtt else 0):>6.0f} {REFERENCE_RTT_P50_MS[schedule]:>6}",
-                f"{100 * statistics.mean(result.pdr.get(2.0, [0])):>6.1f} {100 * REFERENCE_PDR[2.0]:>6.1f}",
-                f"{100 * statistics.mean(result.pdr.get(10.0, [0])):>6.1f} {100 * REFERENCE_PDR[10.0]:>6.1f}",
+                f"{100 * statistics.mean(result.pdr or [0]):>6.1f} {100 * REFERENCE_PDR:>6.1f}",
                 f"{result.incomplete:>4}",
             )
         )
     click.echo(
-        "   N sched    form95s    hw form100s  rtt50ms    hw  pdr2m%    hw pdr10m%    hw  dnf"
+        "   N sched    form95s    hw form100s  rtt50ms    hw    pdr%    hw  dnf"
     )
     for row in rows:
         click.echo("  ".join(row))
     click.echo(
-        f"\n{reps} seeds per N at 2 m, {max(1, reps // 4)} at 10 m; {measure_s:.0f} s probing each; "
+        f"\n{reps} seeds per N, every link at {100 * REFERENCE_PDR:.1f}% PDR; {measure_s:.0f} s probing each; "
         f"RTT is wire time (no UART or host); {time.monotonic() - started:.1f} s wall."
     )
 

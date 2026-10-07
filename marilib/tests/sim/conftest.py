@@ -3,8 +3,11 @@ import pytest
 from marilib.mari_protocol import Frame
 from marilib.model import EdgeEvent, GatewayInfo, NodeInfoEdge
 from marilib.sim.app import SyntheticApp
-from marilib.sim.channel import PerfectChannel
+from marilib.sim.links import PerfectLinks, StaticLinks
 from marilib.sim.network import Network
+
+# The reference campaign's single-attempt PDR at 10 m, for tests that need losses
+LOSSY = StaticLinks(0.943, 0.943)
 
 
 class Uart:
@@ -30,7 +33,7 @@ class Uart:
 
 
 def perfect_network(n: int, schedule: str = "tiny", **kwargs) -> Network:
-    net = Network(schedule, channel=PerfectChannel(), **kwargs)
+    net = Network(schedule, links=PerfectLinks(), **kwargs)
     for _ in range(n):
         net.add_node(SyntheticApp())
     return net
