@@ -146,9 +146,7 @@ def main(sizes: str, reps: int, measure_s: float, seed: int):
                 f"{result.incomplete:>4}",
             )
         )
-    click.echo(
-        "   N sched    form95s    hw form100s  rtt50ms    hw    pdr%    hw  dnf"
-    )
+    click.echo("   N sched    form95s    hw form100s  rtt50ms    hw    pdr%    hw  dnf")
     for row in rows:
         click.echo("  ".join(row))
     click.echo(

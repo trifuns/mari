@@ -1,7 +1,7 @@
 """A slot-level model of one mari gateway and its nodes, behind marilib's gateway adapter.
 
-    net = Network.for_nodes(20, seed=1)
-    edge = MarilibEdge(on_event, serial_interface=SimulatedGatewayAdapter(net))
+net = Network.for_nodes(20, seed=1)
+edge = MarilibEdge(on_event, serial_interface=SimulatedGatewayAdapter(net))
 """
 
 from marilib.sim.adapter import SimulatedGatewayAdapter

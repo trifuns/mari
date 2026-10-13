@@ -42,7 +42,15 @@ def run_cli(*args, events: str | None = None, tmp_path=None):
 
 def test_fast_run_reports_the_scripted_leave_rejoin_and_move(tmp_path):
     result = run_cli(
-        "--nodes", "20", "--duration", "30", "--pacing", "fast", "--summary", events=EVENTS, tmp_path=tmp_path
+        "--nodes",
+        "20",
+        "--duration",
+        "30",
+        "--pacing",
+        "fast",
+        "--summary",
+        events=EVENTS,
+        tmp_path=tmp_path,
     )
     assert result.exit_code == 0, result.output
     assert "20/20 nodes joined" in result.output
@@ -57,8 +65,8 @@ def test_same_seed_and_events_give_the_same_summary(tmp_path):
     args = ("--nodes", "12", "--duration", "20", "--pacing", "fast", "--summary", "--seed", "7")
     first = run_cli(*args, events=EVENTS, tmp_path=tmp_path)
     second = run_cli(*args, events=EVENTS, tmp_path=tmp_path)
-    summary = lambda out: out.split("\n", 1)[1]  # drop the wall-clock line
-    assert summary(first.output) == summary(second.output)
+    # drop the wall-clock line
+    assert first.output.split("\n", 1)[1] == second.output.split("\n", 1)[1]
 
 
 def test_a_move_reaches_the_link_model_as_the_nodes_position():
@@ -83,7 +91,9 @@ def test_fast_runs_measure_rtt_from_gateway_stamps():
     session = Session(net, probe_interval_s=0.5)
     session.run(10)
     assert all(session.recorder.rtt_slots[address] for address in net.nodes)
-    assert all(0 < s < 2 * net.schedule.n_cells for v in session.recorder.rtt_slots.values() for s in v)
+    assert all(
+        0 < s < 2 * net.schedule.n_cells for v in session.recorder.rtt_slots.values() for s in v
+    )
 
 
 @pytest.mark.parametrize(
@@ -103,7 +113,9 @@ def test_bad_arguments_are_usage_errors(args, error):
 
 
 def test_events_on_a_node_that_is_off_are_rejected(tmp_path):
-    result = run_cli("--nodes", "2", "--duration", "1", "--pacing", "fast", events=EVENTS, tmp_path=tmp_path)
+    result = run_cli(
+        "--nodes", "2", "--duration", "1", "--pacing", "fast", events=EVENTS, tmp_path=tmp_path
+    )
     assert result.exit_code == 2
     assert "node 3 is not on" in result.output
 
@@ -171,14 +183,28 @@ def _read_csv(path):
 
 def test_a_realtime_run_writes_the_bench_logs(tmp_path):
     result = run_cli(
-        "--nodes", "3", "--duration", "4", "--headless", "--log-dir", str(tmp_path), "-k", "20", "--load", "50"
+        "--nodes",
+        "3",
+        "--duration",
+        "4",
+        "--headless",
+        "--log-dir",
+        str(tmp_path),
+        "-k",
+        "20",
+        "--load",
+        "50",
     )
     assert result.exit_code == 0, result.output
     (run_dir,) = tmp_path.glob("run_*")
-    joins = [row for row in _read_csv(run_dir / "log_events.csv") if row["event_name"] == "NODE_JOINED"]
+    joins = [
+        row for row in _read_csv(run_dir / "log_events.csv") if row["event_name"] == "NODE_JOINED"
+    ]
     assert len({row["node_address"] for row in joins}) == 3
     (nodes_csv,) = run_dir.glob("node_metrics_*.csv")
-    assert {row["node_address"] for row in _read_csv(nodes_csv)} == {f"0x{0x1000 + i:016X}" for i in (1, 2, 3)}
+    assert {row["node_address"] for row in _read_csv(nodes_csv)} == {
+        f"0x{0x1000 + i:016X}" for i in (1, 2, 3)
+    }
     with open(run_dir / "metrics_setup.csv", newline="") as f:
         setup = dict(row for row in csv.reader(f))
     assert setup["load_percent"] == "50"
@@ -189,19 +215,35 @@ def test_a_realtime_run_writes_the_bench_logs(tmp_path):
 
 def test_realtime_storms_leave_run_meta_beside_the_logs(tmp_path):
     result = run_cli(
-        "--nodes", "3", "--storms", "1", "--hold", "0.5", "--quiet", "0.5", "--headless", "--log-dir", str(tmp_path)
+        "--nodes",
+        "3",
+        "--storms",
+        "1",
+        "--hold",
+        "0.5",
+        "--quiet",
+        "0.5",
+        "--headless",
+        "--log-dir",
+        str(tmp_path),
     )
     assert result.exit_code == 0, result.output
     (run_dir,) = tmp_path.glob("run_*")
     meta = json.loads((run_dir / "run_meta.json").read_text())
     assert (meta["cycles"], meta["fleet"], meta["hold_s"]) == (1, 3, 0.5)
-    joins = [row for row in _read_csv(run_dir / "log_events.csv") if row["event_name"] == "NODE_JOINED"]
-    assert len({row["node_address"] for row in joins}) == 3  # the storm's rejoins, not the formation before it
+    joins = [
+        row for row in _read_csv(run_dir / "log_events.csv") if row["event_name"] == "NODE_JOINED"
+    ]
+    assert (
+        len({row["node_address"] for row in joins}) == 3
+    )  # the storm's rejoins, not the formation before it
 
 
 def test_mari_edge_tui_renders_the_simulated_gateway():
     net = Network.for_nodes(4, seed=1)
-    edge = MarilibEdge(lambda *_: None, serial_interface=SimulatedGatewayAdapter(net, realtime=False))
+    edge = MarilibEdge(
+        lambda *_: None, serial_interface=SimulatedGatewayAdapter(net, realtime=False)
+    )
     try:
         net.run(net.slots_for(2))
         edge.update()

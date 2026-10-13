@@ -134,10 +134,15 @@ class Network:
         period = round(status_period_s * 1e6 / net.slot_us) if status_period_s else 0
         for i in range(n_nodes):
             angle = 2 * math.pi * i / max(n_nodes, 1)
-            position = (round(distance_m * math.cos(angle), 9), round(distance_m * math.sin(angle), 9))
+            position = (
+                round(distance_m * math.cos(angle), 9),
+                round(distance_m * math.sin(angle), 9),
+            )
             address = addresses[i] if i < len(addresses) else DEFAULT_NODE_ADDRESS_BASE + i + 1
             app = SyntheticApp(
-                position=position, period_slots=period, rng=random.Random(f"{net.seed}:app:{address}")
+                position=position,
+                period_slots=period,
+                rng=random.Random(f"{net.seed}:app:{address}"),
             )
             net.add_node(app, address=address)
         return net
@@ -332,7 +337,9 @@ class Network:
         previous = node.state
         node.state = state
         node.epoch += 1
-        self._emit("state", node=node.address, **{"from": previous.name, "to": state.name}, **fields)
+        self._emit(
+            "state", node=node.address, **{"from": previous.name, "to": state.name}, **fields
+        )
 
     def _forget(self, node: SimNode) -> None:
         self._scanning.pop(node.address, None)
@@ -381,7 +388,9 @@ class Network:
         if node.remaining_capacity == 0:
             self._give_up_joining(node, asn, "gateway_full")
             return
-        node.register_collision_backoff(self.fw["MARI_BACKOFF_N_MIN"], self.fw["MARI_BACKOFF_N_MAX"])
+        node.register_collision_backoff(
+            self.fw["MARI_BACKOFF_N_MIN"], self.fw["MARI_BACKOFF_N_MAX"]
+        )
         if node.consecutive_max_backoff >= self.fw["MARI_BACKOFF_MAX_STREAK"]:
             self._give_up_joining(node, asn, "backoff_streak")
             return
@@ -391,7 +400,9 @@ class Network:
         """mr_assoc_node_handle_joined."""
         if node.handover_pending:
             node.handover = HandoverInfo(
-                duration_ms=min(round((asn - node.handover_start_asn) * self.slot_us / 1000), 0xFFFF),
+                duration_ms=min(
+                    round((asn - node.handover_start_asn) * self.slot_us / 1000), 0xFFFF
+                ),
                 seq=(node.handover.seq + 1) & 0xFF,
                 reason=node.handover_reason,
             )
@@ -436,7 +447,13 @@ class Network:
     def _link(self, node: SimNode, direction: str, channel: int) -> Link:
         x, y = node.app.position_m()
         return Link(
-            node.address, self.gateway.address, direction, self.asn, channel, (x, y, 0.0), self.gateway_position
+            node.address,
+            self.gateway.address,
+            direction,
+            self.asn,
+            channel,
+            (x, y, 0.0),
+            self.gateway_position,
         )
 
     def _data_channel(self, index: int) -> int:
@@ -455,7 +472,11 @@ class Network:
         channel = self._beacon_channel(channel_offset)
         members = set(gw.joined)
         for node in self._scanning.values():
-            if node.scan_channel == channel and capacity > 0 and self._received(self._link(node, DOWN, channel), node):
+            if (
+                node.scan_channel == channel
+                and capacity > 0
+                and self._received(self._link(node, DOWN, channel), node)
+            ):
                 node.scan_beacon_capacity = capacity
         for node in self._listening.values():
             if node.active_from > asn or not self._received(self._link(node, DOWN, channel), node):
@@ -580,7 +601,9 @@ class Network:
         frames = []
         for node in senders:
             while (uplink := node.app.next_uplink(asn)) is not None:
-                payload, next_proto = uplink if isinstance(uplink, tuple) else (uplink, node.app.next_proto)
+                payload, next_proto = (
+                    uplink if isinstance(uplink, tuple) else (uplink, node.app.next_proto)
+                )
                 air = AirFrame(PacketType.DATA, node.address, gw.address, payload, next_proto)
                 if not node.queue.add(air):
                     self._emit("queue_wrap", node=node.address)
@@ -637,4 +660,3 @@ class Network:
 
 def _lost(ok: bool) -> dict:
     return {} if ok else {"why": "lost"}
-

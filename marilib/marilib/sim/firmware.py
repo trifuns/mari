@@ -181,7 +181,9 @@ class _Macros:
         expression = _INT_LITERAL.sub(lambda m: str(int(m.group(1), 0)), self.defines[name])
         if not expression:
             raise FirmwareSourceError(f"macro {name} is a flag, not a value")
-        expression = _IDENT.sub(lambda m: f"({self.value(m.group(0), stack + (name,))})", expression)
+        expression = _IDENT.sub(
+            lambda m: f"({self.value(m.group(0), stack + (name,))})", expression
+        )
         if not _ARITHMETIC.fullmatch(expression):
             raise FirmwareSourceError(f"{name} is not integer arithmetic: {expression!r}")
         # every operand is a non-negative integer, so floor division is C's division

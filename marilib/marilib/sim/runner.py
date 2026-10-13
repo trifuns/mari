@@ -38,7 +38,11 @@ class Recorder(Trace):
 
     def emit(self, asn: int, ev: str, **fields) -> None:
         super().emit(asn, ev, **fields)
-        if ev == "tx" and fields["kind"] == "U" and fields.get("why") not in ("collision", "halted"):
+        if (
+            ev == "tx"
+            and fields["kind"] == "U"
+            and fields.get("why") not in ("collision", "halted")
+        ):
             node = int(fields["node"], 16)
             self.attempts[node] += 1
             self.delivered[node] += fields["ok"]
@@ -198,7 +202,12 @@ class Session:
 
     def _storm_result(self) -> Storm:
         since = self._storm_since
-        joins = [(asn, node) for node, asns in self.recorder.joined_at.items() for asn in asns if asn >= since]
+        joins = [
+            (asn, node)
+            for node, asns in self.recorder.joined_at.items()
+            for asn in asns
+            if asn >= since
+        ]
         times = sorted(asn for asn, _ in joins)
         return Storm(
             reset_asn=since,
@@ -309,7 +318,11 @@ class Session:
         address = event.address
         if event.action == "remove":
             left = [a for a in rec.left_at.get(address, []) if a >= fired.asn]
-            seen = f"gateway saw it leave at {self.seconds(left[0]):.1f} s" if left else "gateway never saw it leave"
+            seen = (
+                f"gateway saw it leave at {self.seconds(left[0]):.1f} s"
+                if left
+                else "gateway never saw it leave"
+            )
             return f"{text}: {seen}"
         if event.action == "add":
             joined = [a for a in rec.joined_at.get(address, []) if a >= fired.asn]
@@ -321,14 +334,10 @@ class Session:
         attempts = (after.attempts if after else rec.attempts[address]) - fired.attempts
         delivered = (after.delivered if after else rec.delivered[address]) - fired.delivered
         before = self._before(fired)
-        return (
-            f"{text}: uplink PDR {_pct(*before)}% before, {_pct(delivered, attempts)}% after"
-        )
+        return f"{text}: uplink PDR {_pct(*before)}% before, {_pct(delivered, attempts)}% after"
 
     def _before(self, fired: FiredEvent) -> tuple[int, int]:
-        earlier = [
-            f for f in self.fired if f.event.node == fired.event.node and f.asn < fired.asn
-        ]
+        earlier = [f for f in self.fired if f.event.node == fired.event.node and f.asn < fired.asn]
         base = (earlier[-1].delivered, earlier[-1].attempts) if earlier else (0, 0)
         return fired.delivered - base[0], fired.attempts - base[1]
 

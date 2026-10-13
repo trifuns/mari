@@ -52,7 +52,9 @@ def test_schedule_usage_bitmap_reads_back_through_marilib():
 
 def test_stock_edge_sees_the_simulated_network():
     net = Network.for_nodes(8, seed=4)
-    edge = MarilibEdge(lambda *_: None, serial_interface=SimulatedGatewayAdapter(net, realtime=False))
+    edge = MarilibEdge(
+        lambda *_: None, serial_interface=SimulatedGatewayAdapter(net, realtime=False)
+    )
     try:
         net.run(net.slots_for(5))
         assert len(edge.nodes) == 8

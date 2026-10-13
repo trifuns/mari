@@ -63,8 +63,19 @@ def test_derived_timeouts():
     assert firmware["MARI_SCAN_MAX_SLOTS"] == 149
 
 
-@pytest.mark.parametrize("n, expected", [(1, "tiny"), (10, "tiny"), (11, "medium"), (44, "medium"),
-                                         (45, "big"), (66, "big"), (67, "huge"), (102, "huge")])
+@pytest.mark.parametrize(
+    "n, expected",
+    [
+        (1, "tiny"),
+        (10, "tiny"),
+        (11, "medium"),
+        (44, "medium"),
+        (45, "big"),
+        (66, "big"),
+        (67, "huge"),
+        (102, "huge"),
+    ],
+)
 def test_schedule_for_picks_the_smallest_that_fits(n, expected):
     assert load_firmware().schedule_for(n).name == expected
 

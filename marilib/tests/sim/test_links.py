@@ -26,7 +26,7 @@ def test_a_pdr_outside_the_unit_interval_is_refused():
 def test_the_file_is_the_world_file_in_percent(tmp_path):
     path = tmp_path / "links.toml"
     path.write_text(
-        '[network]\nuplink_pdr = 98\ndownlink_pdr = 96\n\n'
+        "[network]\nuplink_pdr = 98\ndownlink_pdr = 96\n\n"
         '[[dotbots]]\naddress = "BADCAFE111111111"\nuplink_pdr = 91\n\n'
         '[[dotbots]]\naddress = "DEADBEEF22222222"\n'
     )
@@ -48,7 +48,7 @@ def test_pdr_alone_sets_both_directions(tmp_path):
     "text, message",
     [
         ("[network]\nuplink_pdr = 120\n", "network.uplink_pdr"),
-        ('[[dotbots]]\nuplink_pdr = 90\n', r"dotbots\[0\]: no address"),
+        ("[[dotbots]]\nuplink_pdr = 90\n", r"dotbots\[0\]: no address"),
         ('[[dotbots]]\naddress = "A1"\n\n[[dotbots]]\naddress = "a1"\n', "listed twice"),
         ('[[dotbots]]\naddress = "A1"\ndownlink_pdr = "high"\n', r"dotbots\[0\].downlink_pdr"),
     ],

@@ -1,6 +1,12 @@
 import random
 
-from marilib.mari_protocol import MARI_BROADCAST_ADDRESS, Frame, Header, MetricsProbePayload, NextProto
+from marilib.mari_protocol import (
+    MARI_BROADCAST_ADDRESS,
+    Frame,
+    Header,
+    MetricsProbePayload,
+    NextProto,
+)
 from marilib.model import EdgeEvent
 from marilib.sim.app import SyntheticApp
 from marilib.sim.links import PerfectLinks
@@ -12,7 +18,9 @@ from .conftest import Uart, perfect_network
 
 
 def edge_frame(dst: int, payload: bytes) -> bytes:
-    return EdgeEvent.to_bytes(EdgeEvent.NODE_DATA) + Frame(Header(destination=dst), payload).to_bytes()
+    return (
+        EdgeEvent.to_bytes(EdgeEvent.NODE_DATA) + Frame(Header(destination=dst), payload).to_bytes()
+    )
 
 
 def joined(net: Network) -> int:
@@ -109,7 +117,12 @@ def test_a_probe_round_trip_is_stamped_in_slot_order():
     probe = MetricsProbePayload().from_bytes(replies[0].payload)
     assert probe.edge_tx_ts_us == 7
     assert 0 < probe.gw_tx_enqueued_asn <= probe.node_rx_asn < probe.gw_rx_asn
-    assert (probe.gw_tx_count, probe.node_rx_count, probe.node_tx_count, probe.gw_rx_count) == (1, 1, 1, 1)
+    assert (probe.gw_tx_count, probe.node_rx_count, probe.node_tx_count, probe.gw_rx_count) == (
+        1,
+        1,
+        1,
+        1,
+    )
     assert net.schedule.cells[probe.node_rx_asn % net.schedule.n_cells].type == "D"
     assert probe.gw_rx_asn % net.schedule.n_cells == node.cell
 

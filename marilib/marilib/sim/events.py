@@ -1,19 +1,19 @@
 """Scripted changes to a running network, keyed by simulated time.
 
-    [[event]]
-    at = 10.0          # seconds since the run started
-    action = "remove"  # "add", "remove" or "move"
-    node = 3           # node 3 is address 0x1003, the third node Network.for_nodes made
+[[event]]
+at = 10.0          # seconds since the run started
+action = "remove"  # "add", "remove" or "move"
+node = 3           # node 3 is address 0x1003, the third node Network.for_nodes made
 
-    [[event]]
-    at = 20.0
-    action = "move"
-    node = 5
-    distance = 12.0    # meters from the gateway, or position = [x, y]
+[[event]]
+at = 20.0
+action = "move"
+node = 5
+distance = 12.0    # meters from the gateway, or position = [x, y]
 
-    [[event]]
-    at = 30.0
-    action = "halt"    # the gateway: "halt" stops it, "reset" reboots it with empty tables
+[[event]]
+at = 30.0
+action = "halt"    # the gateway: "halt" stops it, "reset" reboots it with empty tables
 """
 
 from __future__ import annotations

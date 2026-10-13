@@ -64,7 +64,9 @@ def main():
     show_default=True,
     help="realtime runs the stock MarilibEdge on the wall clock; fast runs headless as fast as it can.",
 )
-@click.option("--headless", is_flag=True, help="With realtime pacing, run without the mari-edge TUI.")
+@click.option(
+    "--headless", is_flag=True, help="With realtime pacing, run without the mari-edge TUI."
+)
 @click.option(
     "--metrics-probe-interval",
     "-i",
@@ -98,12 +100,20 @@ def main():
     default=None,
     help="Join storms to run, as storm_run.py does: halt the gateway, reset it, let the network re-form.",
 )
-@click.option("--hold", default=6.0, show_default=True, help="Seconds each storm holds the gateway halted.")
 @click.option(
-    "--quiet", default=3.0, show_default=True, help="A storm is over once no join has arrived for this long."
+    "--hold", default=6.0, show_default=True, help="Seconds each storm holds the gateway halted."
 )
 @click.option(
-    "--settle", default=90.0, show_default=True, help="Seconds after a reset at which a storm is over regardless."
+    "--quiet",
+    default=3.0,
+    show_default=True,
+    help="A storm is over once no join has arrived for this long.",
+)
+@click.option(
+    "--settle",
+    default=90.0,
+    show_default=True,
+    help="Seconds after a reset at which a storm is over regardless.",
 )
 @click.option(
     "--events",
@@ -114,7 +124,9 @@ def main():
 @click.option(
     "--trace", "trace_file", type=click.File("w"), help="Write the JSON-lines event trace here."
 )
-@click.option("--summary", is_flag=True, help="Print per-node PDR, RTT and event outcomes at the end.")
+@click.option(
+    "--summary", is_flag=True, help="Print per-node PDR, RTT and event outcomes at the end."
+)
 def run(
     n_nodes, schedule, seed, pdr, links_path, duration, pacing, headless, metrics_probe_interval, probe_every,
     load, log_dir, storms, hold, quiet, settle, events_path, trace_file, summary,
@@ -124,7 +136,9 @@ def run(
     if fast and duration is None and storms is None:
         raise click.UsageError("--pacing fast needs --duration or --storms")
     if fast and (load or log_dir):
-        raise click.UsageError("--load and --log-dir need --pacing realtime: they run in the stock MarilibEdge")
+        raise click.UsageError(
+            "--load and --log-dir need --pacing realtime: they run in the stock MarilibEdge"
+        )
     if metrics_probe_interval is not None and probe_every is not None:
         raise click.UsageError("give -i or -k, not both")
     if metrics_probe_interval is not None and metrics_probe_interval < 0:
@@ -132,18 +146,24 @@ def run(
     if probe_every is not None and probe_every < 1:
         raise click.BadParameter("must be >= 1", param_hint="--probe-every")
     try:
-        links = StaticLinks.from_file(links_path) if links_path else StaticLinks(pdr / 100, pdr / 100)
+        links = (
+            StaticLinks.from_file(links_path) if links_path else StaticLinks(pdr / 100, pdr / 100)
+        )
     except ValueError as error:
         raise click.BadParameter(str(error), param_hint="--links") from None
     if links_path and pdr != 100.0:
-        raise click.UsageError("give --pdr or --links, not both: the file's [network] sets the defaults")
+        raise click.UsageError(
+            "give --pdr or --links, not both: the file's [network] sets the defaults"
+        )
     addresses = links.addresses
     if n_nodes is None:
         n_nodes = len(addresses) or 10
     if n_nodes < len(addresses):
         raise click.BadParameter(f"--links lists {len(addresses)} robots", param_hint="--nodes")
     if events_path and addresses:
-        raise click.UsageError("--events numbers nodes from 1, so it cannot be combined with robots in --links yet")
+        raise click.UsageError(
+            "--events numbers nodes from 1, so it cannot be combined with robots in --links yet"
+        )
     try:
         events = load_events(events_path) if events_path else []
         check_events(events, n_nodes)
@@ -235,7 +255,9 @@ def _run_with_edge(
     from marilib.tui_edge import MarilibTUIEdge
 
     test_state = TestState(load=load, probe_every=probe_every, probe_interval=probe_interval_s)
-    logger = MetricsLogger(log_dir_base=log_dir, rotation_interval_minutes=1440) if log_dir else None
+    logger = (
+        MetricsLogger(log_dir_base=log_dir, rotation_interval_minutes=1440) if log_dir else None
+    )
     adapter = SimulatedGatewayAdapter(session.net, realtime=False)
     edge = MarilibEdge(
         lambda *_: None,
